@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ConnectCall",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define=AGORA_APP_ID=YOUR_AGORA_APP_ID"
+      ]
+    }
+  ]
+}

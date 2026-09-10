@@ -1,0 +1,164 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isParticipant(data) {
+      return signedIn() && request.auth.uid in data.participants;
+    }
+
+    function validPublicUserCreate(uid) {
+      return isUser(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'phone', 'photoUrl',
+          'isOnline', 'lastSeen', 'blockedUids'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.email is string
+        && request.resource.data.isOnline is bool
+        && request.resource.data.blockedUids is list;
+    }
+
+    match /users/{userId} {
+      // Contacts are intentionally readable by authenticated users.
+      // Private device tokens are stored outside this document.
+      allow read: if signedIn();
+
+      allow create: if validPublicUserCreate(userId);
+
+      // Users may update only their own profile/presence/block list.
+      // Immutable identity fields cannot be changed by the client.
+      allow update: if isUser(userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'phone', 'photoUrl', 'isOnline', 'lastSeen', 'blockedUids'
+          ])
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken'])
+            && !request.resource.data.keys().hasAll(['fcmToken'])
+          )
+        )
+        && request.resource.data.name is string
+        && request.resource.data.blockedUids is list;
+
+      allow delete: if false;
+    }
+
+    match /userDevices/{userId}/tokens/{tokenId} {
+      // FCM tokens are private to the owning account.
+      allow read, delete: if isUser(userId);
+      allow create, update: if isUser(userId)
+        && request.resource.data.keys().hasOnly(['token', 'updatedAt'])
+        && request.resource.data.token is string
+        && request.resource.data.token.size() > 0
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /calls/{callId} {
+      allow read: if isParticipant(resource.data);
+
+      // A new call must be a genuine two-party call created by the caller.
+      // 'busy' is retained because the current assignment UI records a busy
+      // attempt in history without entering the media channel.
+      allow create: if signedIn()
+        && request.auth.uid == request.resource.data.callerId
+        && request.resource.data.id == callId
+        && request.resource.data.participants.size() == 2
+        && request.resource.data.participants[0] == request.resource.data.callerId
+        && request.resource.data.participants[1] == request.resource.data.calleeId
+        && request.resource.data.callerId != request.resource.data.calleeId
+        && request.resource.data.type in ['audio', 'video']
+        && request.resource.data.status in ['ringing', 'busy']
+        && request.resource.data.channelName == callId
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.durationSeconds == 0
+        && request.resource.data.callerName is string
+        && request.resource.data.calleeName is string
+        && request.resource.data.participants is list
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.callerId))
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.calleeId))
+        && !(request.resource.data.calleeId in get(/databases/$(database)/documents/users/$(request.resource.data.callerId)).data.blockedUids)
+        && !(request.resource.data.callerId in get(/databases/$(database)/documents/users/$(request.resource.data.calleeId)).data.blockedUids);
+
+      // Callee accepts a ringing call.
+      allow update: if signedIn() && (
+        (
+          request.auth.uid == resource.data.calleeId
+          && resource.data.status == 'ringing'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'answeredAt', 'aliveAt'
+          ])
+          && request.resource.data.answeredAt == request.time
+          && request.resource.data.aliveAt == request.time
+        )
+        // Callee rejects.
+        || (
+          request.auth.uid == resource.data.calleeId
+          && resource.data.status == 'ringing'
+          && request.resource.data.status == 'rejected'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'endedAt', 'durationSeconds'
+          ])
+          && request.resource.data.endedAt == request.time
+          && request.resource.data.durationSeconds == 0
+        )
+        // Caller cancels while ringing.
+        || (
+          request.auth.uid == resource.data.callerId
+          && resource.data.status == 'ringing'
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'endedAt', 'durationSeconds'
+          ])
+          && request.resource.data.endedAt == request.time
+          && request.resource.data.durationSeconds == 0
+        )
+        // Caller marks an unanswered call as missed after the ring window.
+        || (
+          request.auth.uid == resource.data.callerId
+          && resource.data.status == 'ringing'
+          && request.resource.data.status == 'missed'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'endedAt', 'durationSeconds'
+          ])
+          && request.resource.data.endedAt == request.time
+          && request.resource.data.durationSeconds == 0
+          && request.time >= resource.data.createdAt + duration.value(45, 's')
+        )
+        // Either participant can end/fail/disconnect an accepted call.
+        || (
+          request.auth.uid in resource.data.participants
+          && resource.data.status == 'accepted'
+          && request.resource.data.status in ['ended', 'failed', 'disconnected']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'endedAt', 'durationSeconds'
+          ])
+          && request.resource.data.endedAt == request.time
+          && request.resource.data.durationSeconds is int
+          && request.resource.data.durationSeconds >= 0
+          && request.resource.data.durationSeconds <= 86400
+        )
+        // During an accepted call, heartbeat may only update aliveAt.
+        || (
+          request.auth.uid in resource.data.participants
+          && resource.data.status == 'accepted'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'aliveAt'
+          ])
+          && request.resource.data.aliveAt == request.time
+        )
+      );
+    }
+  }
+}

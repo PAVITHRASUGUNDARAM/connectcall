@@ -1,0 +1,41 @@
+# Copy to android/app/google-services.json after creating the Firebase Android app.
+# flutterfire configure will also generate this file.
+{
+  "project_info": {
+    "project_number": "939624797203",
+    "project_id": "connect-call-3b792",
+    "storage_bucket": "connect-call-3b792.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:939624797203:android:eb6239fae4bcc7af1f5be6",
+        "android_client_info": {
+          "package_name": "com.connectcall.connect_call"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "939624797203-c44avn6i54n13v9asnlinav3ct13lef9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCmrIqy24yoMh2O9Ou5ReqzgLtOznhhIeA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "939624797203-c44avn6i54n13v9asnlinav3ct13lef9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
